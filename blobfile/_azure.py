@@ -494,6 +494,8 @@ def _can_access_container(
     auth: Tuple[str, str],
     out_failures: List[RequestFailure],
 ) -> bool:
+    if conf.use_blind_writes:
+        return True
     # https://myaccount.blob.core.windows.net/mycontainer?restype=container&comp=list
     success_codes = [200, 403, 404, INVALID_HOSTNAME_STATUS]
     if auth[0] == ANONYMOUS:
@@ -957,6 +959,41 @@ def _finalize_blob(
     return resp
 
 
+def _prepare_write(
+    conf: Config, path: str, url: str, version: Optional[str]
+) -> Optional[str]:
+    req = Request(
+        url=url,
+        method="HEAD",
+        headers={"If-Match": version} if version else {},
+        success_codes=(200, 400, 404, 412, INVALID_HOSTNAME_STATUS),
+    )
+    resp = execute_api_request(conf, req)
+    if resp.status == 200:
+        if resp.headers["x-ms-blob-type"] == "BlockBlob":
+            resp2 = _clear_uncommitted_blocks(conf, url, resp.headers)
+            if resp2:
+                version = resp2.headers["ETag"]
+        else:
+            remove(conf, path)
+    elif resp.status in (400, INVALID_HOSTNAME_STATUS) or (
+        resp.status == 404 and resp.headers["x-ms-error-code"] == "ContainerNotFound"
+    ):
+        raise FileNotFoundError(
+            f"No such file or container/account does not exist: '{path}'"
+        )
+    elif resp.status == 412:
+        if resp.headers["x-ms-error-code"] != "ConditionNotMet":
+            raise RequestFailure.create_from_request_response(
+                message=f"unexpected status {resp.status}", request=req, response=resp
+            )
+        else:
+            raise VersionMismatch.create_from_request_response(
+                message="etag mismatch", request=req, response=resp
+            )
+    return version
+
+
 def isdir(conf: Config, path: str) -> bool:
     """
     Return true if a path is an existing directory
@@ -1139,42 +1176,8 @@ class StreamingWriteFile(BaseStreamingWriteFile):
         self._upload_id = rng.randint(0, 2**47 - 1)
         self._block_index = 0
         self._version: Optional[str] = version  # for azure, this is an etag
-        # check to see if there is an existing blob at this location with the wrong type
-        req = Request(
-            url=self._url,
-            method="HEAD",
-            headers={"If-Match": self._version} if self._version else {},
-            success_codes=(200, 400, 404, 412, INVALID_HOSTNAME_STATUS),
-        )
-        resp = execute_api_request(conf, req)
-        if resp.status == 200:
-            if resp.headers["x-ms-blob-type"] == "BlockBlob":
-                # because we delete all the uncommitted blocks, any concurrent writers will fail
-                # but they would fail anyway since the first writer to finish would end up
-                # deleting all uncommitted blocks
-                # this means that the last writer to start is likely to win, the others should fail
-                # with ConcurrentWriteFailure
-                resp = _clear_uncommitted_blocks(conf, self._url, resp.headers)
-                if resp:
-                    self._version = resp.headers["ETag"]  # update the version according to new etag
-            else:
-                # if the existing blob type is not compatible with the block blob we are about to write
-                # we have to delete the file before writing our block blob or else we will get a 409
-                # error when putting the first block
-                remove(conf, path)
-        elif resp.status in (400, INVALID_HOSTNAME_STATUS) or (
-            resp.status == 404 and resp.headers["x-ms-error-code"] == "ContainerNotFound"
-        ):
-            raise FileNotFoundError(f"No such file or container/account does not exist: '{path}'")
-        elif resp.status == 412:
-            if resp.headers["x-ms-error-code"] != "ConditionNotMet":
-                raise RequestFailure.create_from_request_response(
-                    message=f"unexpected status {resp.status}", request=req, response=resp
-                )
-            else:
-                raise VersionMismatch.create_from_request_response(
-                    message="etag mismatch", request=req, response=resp
-                )
+        if not conf.use_blind_writes:
+            self._version = _prepare_write(conf, path, self._url, self._version)
         self._md5 = hashlib.md5()
         super().__init__(conf=conf, chunk_size=conf.azure_write_chunk_size)
 

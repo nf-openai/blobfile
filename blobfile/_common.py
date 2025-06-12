@@ -327,6 +327,7 @@ class Config:
         get_http_pool: Optional[Callable[[], urllib3.PoolManager]],
         use_streaming_read: bool,
         default_buffer_size: int,
+        use_blind_writes: bool,
         get_deadline: Optional[Callable[[], Optional[float]]],
         save_access_token_to_disk: bool,
         multiprocessing_start_method: str,
@@ -345,6 +346,7 @@ class Config:
         self.use_azure_storage_account_key_fallback = use_azure_storage_account_key_fallback
         self.use_streaming_read = use_streaming_read
         self.default_buffer_size = default_buffer_size
+        self.use_blind_writes = use_blind_writes
         self.get_deadline = get_deadline
         self.save_access_token_to_disk = save_access_token_to_disk
         self.multiprocessing_start_method = multiprocessing_start_method
