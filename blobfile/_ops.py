@@ -16,6 +16,8 @@ from typing import (
 
 import urllib3
 
+import os
+
 from blobfile._common import DirEntry, RemoteOrLocalPath, Stat
 from blobfile._context import (
     DEFAULT_AZURE_WRITE_CHUNK_SIZE,
@@ -53,6 +55,7 @@ def configure(
     get_http_pool: Optional[Callable[[], urllib3.PoolManager]] = None,
     use_streaming_read: bool = False,
     default_buffer_size: int = DEFAULT_BUFFER_SIZE,
+    use_blind_writes: bool = os.getenv("BLOBFILE_USE_BLIND_WRITES", "0") == "1",
     save_access_token_to_disk: bool = True,
     multiprocessing_start_method: str = "spawn",
 ) -> None:
@@ -69,6 +72,7 @@ def configure(
     use_azure_storage_account_key_fallback: fallback to storage account keys for azure containers, having this enabled requires listing your subscriptions and may run into 429 errors if you hit the low azure quotas for subscription listing
     get_http_pool: a function that returns a `urllib3.PoolManager` to be used for requests
     use_streaming_read: if set to `True`, use a single read per file instead of reading a chunk at a time (not recommended for azure)
+    use_blind_writes: if set to `True`, skip sanity checks that read existing blobs during writes
     default_buffer_size: the default buffer size to use for reading files (and writing local files)
     save_access_token_to_disk: set to `True` to save access tokens to disk so that other processes can read the access tokens to avoid the small amount of time it usually takes to get a token (if the token is still valid).
     multiprocessing_start_method: the start method to use when creating processes for parallel work
@@ -90,6 +94,7 @@ def configure(
         get_http_pool=get_http_pool,
         use_streaming_read=use_streaming_read,
         default_buffer_size=default_buffer_size,
+        use_blind_writes=use_blind_writes,
         save_access_token_to_disk=save_access_token_to_disk,
         multiprocessing_start_method=multiprocessing_start_method,
     )
